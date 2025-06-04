@@ -464,9 +464,16 @@ class BasicInferTask(InferTask):
                 network = copy.deepcopy(self.network)
                 network.to(torch.device(device))
 
-                if path:
+                if path and path.endswith(".pt"):
                     checkpoint = torch.load(path, map_location=torch.device(device))
-                    model_state_dict = checkpoint.get(self.model_state_dict, checkpoint)
+                    model_state_dict = checkpoint.get(self.model_state_dict, checkpoint)["network_weights"]
+                    updated_model_state_dict = {}
+                    for key in model_state_dict.keys():
+                        if key.startswith("_orig_mod."):
+                            updated_model_state_dict[key[len("_orig_mod."):]] = model_state_dict[key]
+                        else:
+                            updated_model_state_dict[key] = model_state_dict[key]
+                    model_state_dict = updated_model_state_dict
                     if set(self.network.state_dict().keys()) != set(model_state_dict.keys()):
                         logger.warning(
                             f"Checkpoint keys don't match network.state_dict()! Items that exist in only one dict"
@@ -477,6 +484,9 @@ class BasicInferTask(InferTask):
                             "If loading fails or the network behaves abnormally, please check the loaded weights"
                         )
                     network.load_state_dict(model_state_dict, strict=self.load_strict)
+                if path and path.endswith(".ts"):
+                    # Load TorchScript model
+                    network = torch.jit.load(path, map_location=torch.device(device))
             else:
                 network = torch.jit.load(path, map_location=torch.device(device))
 
@@ -510,7 +520,10 @@ class BasicInferTask(InferTask):
             inputs = inputs.to(torch.device(device))
 
             with torch.no_grad():
-                outputs = inferer(inputs, network)
+                predictor = self.predictor(model_name=data.get("model_filename"))
+                predictor.predictor.network = network
+                outputs = inferer(inputs, predictor)                
+                #outputs = inferer(inputs, network)
 
             if device.startswith("cuda"):
                 torch.cuda.empty_cache()

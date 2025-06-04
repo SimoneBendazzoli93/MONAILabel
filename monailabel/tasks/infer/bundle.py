@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 from typing import Any, Callable, Dict, Optional, Sequence, Union
-
+import torch
 from monai.bundle import ConfigItem, ConfigParser
 from monai.inferers import Inferer, SimpleInferer
 from monai.transforms import Compose, LoadImaged, SaveImaged
@@ -32,16 +32,16 @@ logger = logging.getLogger(__name__)
 
 class BundleConstants:
     def configs(self) -> Sequence[str]:
-        return ["inference.json", "inference.yaml"]
+        return ["inference.json"]
 
     def metadata_json(self) -> str:
         return "metadata.json"
 
     def model_pytorch(self) -> str:
-        return "model.pt"
+        return "fold_0/model.pt"
 
     def model_torchscript(self) -> str:
-        return "model.ts"
+        return "fold_0/model.ts"
 
     def key_device(self) -> str:
         return "device"
@@ -50,7 +50,7 @@ class BundleConstants:
         return "bundle_root"
 
     def key_network_def(self) -> str:
-        return "network_def"
+        return "network_def_predictor"
 
     def key_preprocessing(self) -> Sequence[str]:
         return ["preprocessing", "pre_transforms"]
@@ -90,6 +90,9 @@ class BundleInferTask(BasicInferTask):
         load_strict=False,
         **kwargs,
     ):
+        os.environ["nnUNet_raw"] = os.path.join(path,"nnUNet_Dir", "nnUNet_raw_data_base")
+        os.environ["nnUNet_preprocessed"] = os.path.join(path,"nnUNet_Dir", "nnUNet_preprocessed")
+        os.environ["nnUNet_results"] = os.path.join(path,"nnUNet_Dir", "nnUNet_trained_models")
         self.valid: bool = False
         self.const = const if const else BundleConstants()
 
@@ -100,8 +103,25 @@ class BundleInferTask(BasicInferTask):
 
         config_paths = [c for c in self.const.configs() if os.path.exists(os.path.join(path, "configs", c))]
         if not config_paths:
-            logger.warning(f"Ignore {path} as there is no infer config {self.const.configs()} exists")
-            return
+            model_path = os.path.join(path, "models", self.const.model_torchscript())
+            if not os.path.exists(model_path):
+                logger.warning(f"Ignore {path} as there is no infer config {self.const.configs()} exists")
+                return
+            else:
+                # Prepare empty dict with keys matching the embedded files
+                extra_files = {"inference.json": "","metadata.json": ""}
+
+                # Load model and get embedded files
+                loaded_model = torch.jit.load(model_path, _extra_files=extra_files)
+                config = json.loads(extra_files["inference.json"])
+                metadata = json.loads(extra_files["metadata.json"])
+                # Save the config and metadata to the bundle path
+                with open(os.path.join(path, "configs", "inference.json"), "w") as f:
+                    json.dump(config, f)
+                with open(os.path.join(path, "configs", "metadata.json"), "w") as f:
+                    json.dump(metadata, f)
+                config_paths = ["inference.json"]
+
 
         sys.path.insert(0, path)
         unload_module("scripts")
@@ -162,7 +182,8 @@ class BundleInferTask(BasicInferTask):
         )
 
         # Add models options if more than one model is provided by bundle.
-        pytorch_models = [os.path.basename(p) for p in glob.glob(os.path.join(path, "models", "*.pt"))]
+        pytorch_models = [os.path.basename(p) for p in glob.glob(os.path.join(path, "models", "fold_0", "*.ts"))]
+        pytorch_models += [os.path.basename(p) for p in glob.glob(os.path.join(path, "models", "fold_0", "*.pt"))]
         pytorch_models.sort(key=len)
         self._config.update({"model_filename": pytorch_models})
         # Add bundle's loadable params to MONAI Label config, load exposed keys and params to options panel
@@ -217,6 +238,11 @@ class BundleInferTask(BasicInferTask):
 
         sys.path.remove(self.bundle_path)
         return pre
+    
+    def predictor(self, model_name):
+        self.bundle_config["model_name"] = model_name
+        predictor = self.bundle_config.get_parsed_content('network_def', instantiate=True)  # type: ignore
+        return predictor
 
     def inferer(self, data=None) -> Inferer:
         sys.path.insert(0, self.bundle_path)
