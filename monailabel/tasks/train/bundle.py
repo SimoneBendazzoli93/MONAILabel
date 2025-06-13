@@ -17,6 +17,13 @@ import subprocess
 import sys
 from typing import Dict, Optional, Sequence
 
+from monai.transforms import LoadImaged, ConcatItemsd, EnsureChannelFirstD, Compose, SaveImageD
+from pathlib import Path
+import SimpleITK as sitk
+from nilearn.image import resample_to_img
+from monailabel.datastore.dicom import DICOMWebDatastore
+import nibabel as nib
+from monai.nvflare.utils import prepare_data_folder_api, plan_and_preprocess_api, prepare_bundle_api
 import monai.bundle
 import torch
 from monai.bundle import ConfigParser
@@ -31,6 +38,20 @@ from monailabel.utils.others.generic import device_list, name_to_device
 
 logger = logging.getLogger(__name__)
 
+RESAMPLING_PARAMETERS = {
+    "ct": {
+        "background": -1024,
+        "mode": "continuous",
+    },
+    "pet": {
+        "background": 0,
+        "mode": "continuous",
+    },
+    "label": {
+        "background": 0,
+        "mode": "nearest",
+    }
+}
 
 class BundleConstants:
     def configs(self) -> Sequence[str]:
@@ -43,7 +64,7 @@ class BundleConstants:
         return "metadata.json"
 
     def model_pytorch(self) -> str:
-        return "model.pt"
+        return "fold_0/model.pt"
 
     def key_device(self) -> str:
         return "device"
@@ -52,7 +73,7 @@ class BundleConstants:
         return "bundle_root"
 
     def key_network(self) -> str:
-        return "network"
+        return "network_def"
 
     def key_network_def(self) -> str:
         return "network_def"
@@ -61,10 +82,10 @@ class BundleConstants:
         return "train#trainer#max_epochs"
 
     def key_train_dataset_data(self) -> str:
-        return "train#dataset#data"
+        return "train#train_data"
 
     def key_train_handlers(self) -> str:
-        return "train#handlers"
+        return "train_handlers#handlers"
 
     def key_validate_dataset_data(self) -> str:
         return "validate#dataset#data"
@@ -76,10 +97,10 @@ class BundleConstants:
         return "tracking_uri"
 
     def key_experiment_name(self) -> str:
-        return "experiment_name"
+        return "mlflow_experiment_name"
 
     def key_run_name(self) -> str:
-        return "run_name"
+        return "mlflow_run_name"
 
     def key_displayable_configs(self) -> Sequence[str]:
         return ["displayable_configs"]
@@ -130,14 +151,15 @@ class BundleTrainTask(TrainTask):
 
     def config(self):
         # Add models and param optiom to train option panel
-        pytorch_models = [os.path.basename(p) for p in glob.glob(os.path.join(self.bundle_path, "models", "*.pt"))]
+        pytorch_models = [os.path.basename(p) for p in glob.glob(os.path.join(self.bundle_path, "models", "fold_0","*.pt"))]
+        pytorch_models += [os.path.basename(p) for p in glob.glob(os.path.join(self.bundle_path, "models", "fold_0", "*.ts"))]
         pytorch_models.sort(key=len)
 
         config_options = {
             "device": device_list(),  # DEVICE
             "pretrained": True,  # USE EXISTING CHECKPOINT/PRETRAINED MODEL
-            "max_epochs": 50,  # TOTAL EPOCHS TO RUN
-            "val_split": 0.2,  # VALIDATION SPLIT; -1 TO USE DEFAULT FROM BUNDLE
+            "max_epochs": 1,  # TOTAL EPOCHS TO RUN
+            "val_split": -1,  # VALIDATION SPLIT; -1 TO USE DEFAULT FROM BUNDLE
             "multi_gpu": True,  # USE MULTI-GPU
             "gpus": "all",  # COMMA SEPARATE DEVICE INDEX
             "tracking": (
@@ -149,12 +171,17 @@ class BundleTrainTask(TrainTask):
             "tracking_experiment_name": "",
             "run_id": "",  # bundle run id, if different from default
             "model_filename": pytorch_models,
+            "skip_preprocess": False,  # SKIP PREPROCESSING
         }
 
         for k in self.const.key_displayable_configs():
             if self.bundle_config.get(k):
                 config_options.update(self.bundle_config.get_parsed_content(k, instantiate=True))  # type: ignore
-
+        
+        label_dict = self.bundle_config.get_parsed_content("label_dict", instantiate=True)
+        for k, v in label_dict.items():
+            config_options["Label_"+str(k)] = v
+            
         return config_options
 
     def _fetch_datalist(self, request, datastore: Datastore):
@@ -195,23 +222,136 @@ class BundleTrainTask(TrainTask):
 
     def _load_checkpoint(self, model_pytorch, pretrained, train_handlers):
         load_path = model_pytorch if pretrained else None
-        if os.path.exists(load_path):
+        if load_path is not None and os.path.exists(load_path):
             logger.info(f"Add Checkpoint Loader for Path: {load_path}")
 
-            load_dict = {self.model_dict_key: f"$@{self.const.key_network()}"}
+            load_dict = {
+                "network_weights": "$@nnunet_trainer.network",
+                "optimizer_state": "$@nnunet_trainer.optimizer",
+                "scheduler": "$@nnunet_trainer.lr_scheduler",
+            }
             if not [t for t in train_handlers if t.get("_target_") == CheckpointLoader.__name__]:
                 loader = {
                     "_target_": CheckpointLoader.__name__,
                     "load_path": load_path,
                     "load_dict": load_dict,
                     "strict": self.load_strict,
+                    "map_location": name_to_device(self.bundle_config.get(self.const.key_device(), "cuda")),
                 }
                 train_handlers.insert(0, loader)
+
+    
+    def _prepare_dataset_and_preprocess(self, data_dir, nnunet_root_dir, dataset_name_or_id, experiment_name, label_dict, trainer_class_name, nnunet_plans_name,region_class_order=None):
+        modality_dict = {"image": ".nii.gz", "label": ".nii.gz"}
+        
+        if region_class_order == "":
+            region_class_order = None
+        elif region_class_order is not None:
+            region_class_order = [int(i) for i in region_class_order.split(",")]
+        
+        prepare_data_folder_api(
+            data_dir,
+            nnunet_root_dir,
+            dataset_name_or_id,
+            modality_dict=modality_dict,
+            experiment_name=experiment_name,
+            dataset_format="monai-label",
+            modality_list = ["ct","pet"],
+            subfolder_suffix=None,
+            patient_id_in_file_identifier=True,
+            trainer_class_name=trainer_class_name,
+            concatenate_modalities_flag = False,
+            output_data_dir=None,
+            labels = label_dict,
+            regions_class_order = region_class_order,
+        )
+        
+        plan_and_preprocess_api(nnunet_root_dir, dataset_name_or_id, trainer_class_name=trainer_class_name, nnunet_plans_name=nnunet_plans_name)
+    
+    def verify_label_files(self, train_ds):
+        """
+        Verify that all label files in the training dataset exist and are valid.
+        If any label file is missing or invalid, raise an exception.
+        """
+        for item in train_ds:
+            if "label" not in item or not item["label"]:
+                raise ValueError(f"Label file is missing for item: {item}")
+            if not os.path.exists(item["label"]):
+                raise FileNotFoundError(f"Label file does not exist: {item['label']}")
+            # Additional checks can be added here to validate the content of the label file
+              
+            reference_image = item["image"]
+            label_file = item["label"]
+            label_data = sitk.ReadImage(label_file)
+            image_data = sitk.ReadImage(reference_image)
+            label_size = label_data.GetSize()
+            image_size = image_data.GetSize()
+            if len(image_size) > 3:
+                image_size = image_size[:3]  # Use only the first three dimensions for comparison
+            if label_size != image_size:
+                print(f"Label file {label_file} does not match the size of the reference image {reference_image}")
+
+                print(f"Resampling {label_file} to {reference_image}")
+                if label_file.endswith(".nrrd"):
+                    input_image = sitk.ReadImage(label_file)
+                    reference_image = sitk.ReadImage(reference_image)
+                    resampled_image = sitk.Resample(input_image, reference_image, sitk.Transform(), sitk.sitkNearestNeighbor, 0.0, input_image.GetPixelID())
+                    sitk.WriteImage(resampled_image, label_file)
+                elif label_file.endswith(".nii.gz") or label_file.endswith(".nii"):
+                    input_image = nib.load(label_file)
+                    reference_image = nib.load(reference_image)
+                    resampled_image = resample_to_img(input_image, reference_image, fill_value=0)
+                    nib.save(resampled_image, label_file)
 
     def __call__(self, request, datastore: Datastore):
         logger.info(f"Train Request: {request}")
         ds = self._fetch_datalist(request, datastore)
         train_ds, val_ds = self._partition_datalist(ds, request)
+        print(f"Train Dataset: {train_ds}")
+        print(f"Validation Dataset: {val_ds}")
+        
+        label_dict = {}
+        for k in request.keys():
+            if k.startswith("Label_"):
+                label = k.split("_")[1]
+                try:
+                    label_dict[request[k]] = int(label)
+                except ValueError:
+                    label_dict[request[k]] = label
+        print(f"Label Dict: {label_dict}")
+
+        if not request.get("skip_preprocess", False):
+            self.verify_label_files(train_ds)
+            self._prepare_dataset_and_preprocess(
+                data_dir = {"training": train_ds, "testing": []},
+                nnunet_root_dir = os.path.join(self.bundle_path, "nnUNet_Dir"),
+                dataset_name_or_id = request.get("dataset_name_or_id", None),
+                experiment_name = request.get("tracking_experiment_name", None),
+                trainer_class_name= request.get("nnunet_trainer_class_name", None),
+                label_dict = label_dict,
+                nnunet_plans_name = request.get("nnunet_plans_identifier", None),
+                region_class_order = request.get("region_class_order", None),
+            )
+        
+        
+        train_config ={
+            "bundle_root": self.bundle_path,
+            "tracking_uri": request.get("tracking_uri", None),
+            "mlflow_experiment_name": request.get("tracking_experiment_name", None),
+            "mlflow_run_name": request.get("mlflow_run_name", None),
+            "dataset_name_or_id": request.get("dataset_name_or_id", None),
+            "label_dict": label_dict,
+            "nnunet_plans_identifier": request.get("nnunet_plans_identifier", None),
+            "nnunet_trainer_class_name": request.get("nnunet_trainer_class_name", None),
+            "dataset_name_or_id": request.get("dataset_name_or_id", None),
+        }
+        
+        extra_train_config = {
+            "nnunet_root_folder": os.path.join(self.bundle_path, "nnUNet_Dir")
+        }
+        
+        prepare_bundle_api(train_config, train_extra_configs=extra_train_config)
+        
 
         max_epochs = request.get("max_epochs", 50)
         pretrained = request.get("pretrained", True)
@@ -238,7 +378,7 @@ class BundleTrainTask(TrainTask):
         tracking_uri = tracking_uri if tracking_uri else settings.MONAI_LABEL_TRACKING_URI
         tracking_experiment_name = request.get("tracking_experiment_name")
         tracking_experiment_name = tracking_experiment_name if tracking_experiment_name else request.get("model")
-        tracking_run_name = request.get("tracking_run_name")
+        tracking_run_name = request.get("mlflow_run_name")
         logger.info(f"(Experiment Management) Tracking: {tracking}")
         logger.info(f"(Experiment Management) Tracking URI: {tracking_uri}")
         logger.info(f"(Experiment Management) Experiment Name: {tracking_experiment_name}")
@@ -248,7 +388,7 @@ class BundleTrainTask(TrainTask):
 
         model_filename = request.get("model_filename", "model.pt")
         model_filename = model_filename if isinstance(model_filename, str) else model_filename[0]
-        model_pytorch = os.path.join(self.bundle_path, "models", model_filename)
+        model_pytorch = os.path.join(self.bundle_path, "models", "fold_0",model_filename)
 
         self._load_checkpoint(model_pytorch, pretrained, train_handlers)
 
