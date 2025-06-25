@@ -467,13 +467,6 @@ class BasicInferTask(InferTask):
                 if path and path.endswith(".pt"):
                     checkpoint = torch.load(path, map_location=torch.device(device))
                     model_state_dict = checkpoint.get(self.model_state_dict, checkpoint)["network_weights"]
-                    updated_model_state_dict = {}
-                    for key in model_state_dict.keys():
-                        if key.startswith("_orig_mod."):
-                            updated_model_state_dict[key[len("_orig_mod."):]] = model_state_dict[key]
-                        else:
-                            updated_model_state_dict[key] = model_state_dict[key]
-                    model_state_dict = updated_model_state_dict
                     if set(self.network.state_dict().keys()) != set(model_state_dict.keys()):
                         logger.warning(
                             f"Checkpoint keys don't match network.state_dict()! Items that exist in only one dict"
