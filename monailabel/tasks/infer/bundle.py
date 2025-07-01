@@ -153,6 +153,7 @@ class BundleInferTask(BasicInferTask):
             metadata = json.load(fp)
 
         self.key_image, image = next(iter(metadata["network_data_format"]["inputs"].items()))
+        self.key_image = "image"
         self.key_pred, pred = next(iter(metadata["network_data_format"]["outputs"].items()))
 
         # labels = ({v.lower(): int(k) for k, v in pred.get("channel_def", {}).items() if v.lower() != "background"})

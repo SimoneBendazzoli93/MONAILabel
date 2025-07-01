@@ -241,7 +241,7 @@ class BundleTrainTask(TrainTask):
                 train_handlers.insert(0, loader)
 
     
-    def _prepare_dataset_and_preprocess(self, data_dir, nnunet_root_dir, dataset_name_or_id, experiment_name, label_dict, trainer_class_name, nnunet_plans_name,region_class_order=None):
+    def _prepare_dataset_and_preprocess(self, data_dir, nnunet_root_dir, dataset_name_or_id, experiment_name, label_dict, trainer_class_name, nnunet_plans_name,modality_list,region_class_order=None):
         modality_dict = {"image": ".nii.gz", "label": ".nii.gz"}
         
         if region_class_order == "":
@@ -249,6 +249,7 @@ class BundleTrainTask(TrainTask):
         elif region_class_order is not None:
             region_class_order = [int(i) for i in region_class_order.split(",")]
         
+        modality_list = [m for m in modality_list.split(",")]
         prepare_data_folder_api(
             data_dir,
             nnunet_root_dir,
@@ -256,7 +257,7 @@ class BundleTrainTask(TrainTask):
             modality_dict=modality_dict,
             experiment_name=experiment_name,
             dataset_format="monai-label",
-            modality_list = ["ct","pet"],
+            modality_list = modality_list,
             subfolder_suffix=None,
             patient_id_in_file_identifier=True,
             trainer_class_name=trainer_class_name,
@@ -330,6 +331,7 @@ class BundleTrainTask(TrainTask):
                 trainer_class_name= request.get("nnunet_trainer_class_name", None),
                 label_dict = label_dict,
                 nnunet_plans_name = request.get("nnunet_plans_identifier", None),
+                modality_list = request.get("modality_list", None),
                 region_class_order = request.get("region_class_order", None),
             )
         
