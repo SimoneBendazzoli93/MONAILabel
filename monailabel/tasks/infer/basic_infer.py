@@ -275,6 +275,8 @@ class BasicInferTask(InferTask):
         device = name_to_device(req.get("device", "cuda"))
         req["device"] = device
 
+        if isinstance(req["model_filename"], list):
+            req["model_filename"] = req["model_filename"][0]
         logger.setLevel(req.get("logging", "INFO").upper())
         if req.get("image") is not None and isinstance(req.get("image"), str):
             logger.info(f"Infer Request (final): {req}")
