@@ -467,7 +467,7 @@ class BasicInferTask(InferTask):
                 network.to(torch.device(device))
 
                 if path and path.endswith(".pt"):
-                    checkpoint = torch.load(path, map_location=torch.device(device))
+                    checkpoint = torch.load(path, map_location=torch.device(device), weights_only=False)
                     model_state_dict = checkpoint.get(self.model_state_dict, checkpoint)["network_weights"]
                     if set(self.network.state_dict().keys()) != set(model_state_dict.keys()):
                         logger.warning(
@@ -483,7 +483,21 @@ class BasicInferTask(InferTask):
                     # Load TorchScript model
                     network = torch.jit.load(path, map_location=torch.device(device))
             else:
-                network = torch.jit.load(path, map_location=torch.device(device))
+                if path and path.endswith(".pt"):
+                    checkpoint = torch.load(path, map_location=torch.device(device), weights_only=False)
+                    model_state_dict = checkpoint.get(self.model_state_dict, checkpoint)["network_weights"]
+                    if set(self.network.state_dict().keys()) != set(model_state_dict.keys()):
+                        logger.warning(
+                            f"Checkpoint keys don't match network.state_dict()! Items that exist in only one dict"
+                            f" but not in the other: {set(self.network.state_dict().keys()) ^ set(model_state_dict.keys())}"
+                        )
+                        logger.warning(
+                            "The run will now continue unless load_strict is set to True. "
+                            "If loading fails or the network behaves abnormally, please check the loaded weights"
+                        )
+                    network.load_state_dict(model_state_dict, strict=self.load_strict)
+                if path and path.endswith(".ts"):
+                    network = torch.jit.load(path, map_location=torch.device(device))
 
             if self.train_mode:
                 network.train()
