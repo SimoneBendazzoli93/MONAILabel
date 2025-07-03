@@ -24,6 +24,7 @@ from nilearn.image import resample_to_img
 from monailabel.datastore.dicom import DICOMWebDatastore
 import nibabel as nib
 from monai.nvflare.utils import prepare_data_folder_api, plan_and_preprocess_api, prepare_bundle_api
+from monai.nvflare.nvflare_nnunet import preprocess
 import monai.bundle
 import torch
 from monai.bundle import ConfigParser
@@ -241,7 +242,7 @@ class BundleTrainTask(TrainTask):
                 train_handlers.insert(0, loader)
 
     
-    def _prepare_dataset_and_preprocess(self, data_dir, nnunet_root_dir, dataset_name_or_id, experiment_name, label_dict, trainer_class_name, nnunet_plans_name,modality_list,region_class_order=None):
+    def _prepare_dataset_and_preprocess(self, data_dir, nnunet_root_dir, dataset_name_or_id, experiment_name, label_dict, trainer_class_name, nnunet_plans_name,modality_list,region_class_order=None, preprocess_only=False, model_path=None):
         modality_dict = {"image": ".nii.gz", "label": ".nii.gz"}
         
         if region_class_order == "":
@@ -267,7 +268,22 @@ class BundleTrainTask(TrainTask):
             regions_class_order = region_class_order,
         )
         
-        plan_and_preprocess_api(nnunet_root_dir, dataset_name_or_id, trainer_class_name=trainer_class_name, nnunet_plans_name=nnunet_plans_name)
+        if preprocess_only:
+            if Path(self.bundle_path).joinpath("models", "plans.json").is_file():
+                nnunet_plans_file_path = os.path.join(self.bundle_path, "models", "plans.json")
+            else:
+                extra_files = {"inference.json": "","metadata.json": ""}
+
+                # Load model and get embedded files
+                loaded_model = torch.jit.load(model_path, _extra_files=extra_files)
+                config = json.loads(extra_files["inference.json"])
+                plans = config["plans"]
+                with open(os.path.join(self.bundle_path, "configs", "plans.json"), "w") as f:
+                    json.dump(plans, f)
+                nnunet_plans_file_path = os.path.join(self.bundle_path, "configs", "plans.json")
+            preprocess(nnunet_root_dir, dataset_name_or_id, nnunet_plans_file_path=nnunet_plans_file_path, trainer_class_name="nnUNetTrainer")
+        else:
+            plan_and_preprocess_api(nnunet_root_dir, dataset_name_or_id, trainer_class_name=trainer_class_name, nnunet_plans_name=nnunet_plans_name)
     
     def verify_label_files(self, train_ds):
         """
@@ -323,6 +339,15 @@ class BundleTrainTask(TrainTask):
 
         if not request.get("skip_preprocess", False):
             self.verify_label_files(train_ds)
+            preprocess_only = False
+            pretrained = request.get("pretrained", True)
+            
+            model_filename = request.get("model_filename", "model.pt")
+            model_filename = model_filename if isinstance(model_filename, str) else model_filename[0]
+            model_pytorch = os.path.join(self.bundle_path, "models", "fold_0",model_filename)
+            
+            if pretrained and Path(model_pytorch).is_file():
+                preprocess_only = True
             self._prepare_dataset_and_preprocess(
                 data_dir = {"training": train_ds, "testing": []},
                 nnunet_root_dir = os.path.join(self.bundle_path, "nnUNet_Dir"),
@@ -333,6 +358,8 @@ class BundleTrainTask(TrainTask):
                 nnunet_plans_name = request.get("nnunet_plans_identifier", None),
                 modality_list = request.get("modality_list", None),
                 region_class_order = request.get("region_class_order", None),
+                preprocess_only=preprocess_only,
+                model_path=model_pytorch if pretrained else None,
             )
         
         
