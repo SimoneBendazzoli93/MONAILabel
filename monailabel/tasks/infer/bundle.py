@@ -90,6 +90,7 @@ class BundleInferTask(BasicInferTask):
         load_strict=False,
         **kwargs,
     ):
+        self.bundle_path = path
         os.environ["nnUNet_raw"] = os.path.join(path,"nnUNet_Dir", "nnUNet_raw_data_base")
         os.environ["nnUNet_preprocessed"] = os.path.join(path,"nnUNet_Dir", "nnUNet_preprocessed")
         os.environ["nnUNet_results"] = os.path.join(path,"nnUNet_Dir", "nnUNet_trained_models")

@@ -13,6 +13,7 @@ import copy
 import logging
 import os
 import time
+import glob
 from abc import abstractmethod
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -128,6 +129,10 @@ class BasicInferTask(InferTask):
         }
 
     def config(self) -> Dict[str, Any]:
+        pytorch_models = [os.path.basename(p) for p in glob.glob(os.path.join(self.bundle_path, "models", "fold_0", "*.ts"))]
+        pytorch_models += [os.path.basename(p) for p in glob.glob(os.path.join(self.bundle_path, "models", "fold_0", "*.pt"))]
+        pytorch_models.sort(key=len)
+        self._config.update({"model_filename": pytorch_models})
         return self._config
 
     def is_valid(self) -> bool:
