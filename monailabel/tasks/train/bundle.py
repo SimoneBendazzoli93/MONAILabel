@@ -229,7 +229,7 @@ class BundleTrainTask(TrainTask):
             checkpoint = torch.load(load_path, weights_only=False)
 
             load_dict = {
-                "network_weights": "$@nnunet_trainer.network",
+                "network_weights": "$@nnunet_trainer.network._orig_mod",
                
             }
             if "optimizer_state" in checkpoint:
