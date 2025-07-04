@@ -281,7 +281,7 @@ class BundleTrainTask(TrainTask):
                 with open(os.path.join(self.bundle_path, "configs", "plans.json"), "w") as f:
                     json.dump(plans, f)
                 nnunet_plans_file_path = os.path.join(self.bundle_path, "configs", "plans.json")
-            preprocess(nnunet_root_dir, dataset_name_or_id, nnunet_plans_file_path=nnunet_plans_file_path, trainer_class_name="nnUNetTrainer")
+            preprocess(nnunet_root_dir, dataset_name_or_id, nnunet_plans_file_path=Path(nnunet_plans_file_path), trainer_class_name="nnUNetTrainer")
         else:
             plan_and_preprocess_api(nnunet_root_dir, dataset_name_or_id, trainer_class_name=trainer_class_name, nnunet_plans_name=nnunet_plans_name)
     
@@ -320,6 +320,13 @@ class BundleTrainTask(TrainTask):
                     resampled_image = resample_to_img(input_image, reference_image, fill_value=0)
                     nib.save(resampled_image, label_file)
 
+
+    def convert_ts_to_pt(self, model_ts):
+        ts_model = torch.jit.load(model_ts)
+        state_dict = ts_model.state_dict()
+        torch.save({"network_weights": state_dict}, Path(model_ts).with_suffix(".pt"))
+        return Path(model_ts).with_suffix(".pt")
+    
     def __call__(self, request, datastore: Datastore):
         logger.info(f"Train Request: {request}")
         ds = self._fetch_datalist(request, datastore)
@@ -418,7 +425,8 @@ class BundleTrainTask(TrainTask):
         model_filename = request.get("model_filename", "model.pt")
         model_filename = model_filename if isinstance(model_filename, str) else model_filename[0]
         model_pytorch = os.path.join(self.bundle_path, "models", "fold_0",model_filename)
-
+        if model_filename.endswith(".ts"):
+            model_pytorch = self.convert_ts_to_pt(model_pytorch)
         self._load_checkpoint(model_pytorch, pretrained, train_handlers)
 
         overrides = {
