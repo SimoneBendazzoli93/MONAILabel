@@ -226,11 +226,21 @@ class BundleTrainTask(TrainTask):
         if load_path is not None and os.path.exists(load_path):
             logger.info(f"Add Checkpoint Loader for Path: {load_path}")
 
+            checkpoint = torch.load(load_path, weights_only=False)
+
             load_dict = {
                 "network_weights": "$@nnunet_trainer.network",
-                "optimizer_state": "$@nnunet_trainer.optimizer",
-                "scheduler": "$@nnunet_trainer.lr_scheduler",
+               
             }
+            if "optimizer_state" in checkpoint:
+                load_dict.update({
+                    "optimizer_state": "$@nnunet_trainer.optimizer",
+                })
+            if "scheduler" in checkpoint:
+                load_dict.update({
+                    "scheduler": "$@nnunet_trainer.scheduler",
+                })
+             
             if not [t for t in train_handlers if t.get("_target_") == CheckpointLoader.__name__]:
                 loader = {
                     "_target_": CheckpointLoader.__name__,
