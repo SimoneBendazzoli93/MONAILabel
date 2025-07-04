@@ -115,7 +115,7 @@ class BundleTrainTask(TrainTask):
         const: Optional[BundleConstants] = None,
         enable_tracking=False,
         model_dict_key="model",
-        load_strict=False,
+        load_strict=True,
     ):
         self.valid: bool = False
         self.conf = conf
