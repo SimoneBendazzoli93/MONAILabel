@@ -278,9 +278,9 @@ class BundleTrainTask(TrainTask):
                 loaded_model = torch.jit.load(model_path, _extra_files=extra_files)
                 config = json.loads(extra_files["inference.json"])
                 plans = config["plans"]
-                with open(os.path.join(self.bundle_path, "configs", "plans.json"), "w") as f:
+                with open(os.path.join(self.bundle_path, "configs", f"{nnunet_plans_name}.json"), "w") as f:
                     json.dump(plans, f)
-                nnunet_plans_file_path = os.path.join(self.bundle_path, "configs", "plans.json")
+                nnunet_plans_file_path = os.path.join(self.bundle_path, "configs", f"{nnunet_plans_name}.json")
             preprocess(nnunet_root_dir, dataset_name_or_id, nnunet_plans_file_path=Path(nnunet_plans_file_path), trainer_class_name="nnUNetTrainer")
         else:
             plan_and_preprocess_api(nnunet_root_dir, dataset_name_or_id, trainer_class_name=trainer_class_name, nnunet_plans_name=nnunet_plans_name)
