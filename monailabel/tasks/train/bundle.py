@@ -179,9 +179,13 @@ class BundleTrainTask(TrainTask):
             if self.bundle_config.get(k):
                 config_options.update(self.bundle_config.get_parsed_content(k, instantiate=True))  # type: ignore
         
-        label_dict = self.bundle_config.get_parsed_content("label_dict", instantiate=True)
-        for k, v in label_dict.items():
-            config_options["Label_"+str(k)] = v
+        try:
+            label_dict = self.bundle_config.get_parsed_content("label_dict", instantiate=True)
+            for k, v in label_dict.items():
+                config_options["Label_"+str(k)] = v
+        except Exception as e:
+            logger.warning(f"Error loading label_dict from bundle config: {e}")
+            
             
         return config_options
 
@@ -336,6 +340,9 @@ class BundleTrainTask(TrainTask):
         state_dict = ts_model.state_dict()
         torch.save({"network_weights": state_dict}, Path(model_ts).with_suffix(".pt"))
         return Path(model_ts).with_suffix(".pt")
+    
+    def _replace_plans_file(self):
+        os.path.join(self.bundle_path, "nnUNet_Dir")
     
     def __call__(self, request, datastore: Datastore):
         logger.info(f"Train Request: {request}")
@@ -522,6 +529,9 @@ class BundleTrainTask(TrainTask):
             unload_module("scripts")
 
             self.run_single_gpu(request, overrides)
+            if not pretrained:
+                logger.info("Replacing plans file in inference config, since the model is trained from scratch...")
+                self._replace_plans_file()
 
         sys.path.remove(self.bundle_path)
 
