@@ -82,7 +82,7 @@ def from_token(token: str):
         return DEFAULT_USER
 
     options = {
-        "verify_signature": True,
+        "verify_signature": False,
         "verify_aud": False,
         "verify_exp": True,
     }
