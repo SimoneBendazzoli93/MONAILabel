@@ -174,13 +174,13 @@ class BundleTrainTask(TrainTask):
             "model_filename": pytorch_models,
             "skip_preprocess": False,  # SKIP PREPROCESSING
         }
-
-        for k in self.const.key_displayable_configs():
-            if self.bundle_config.get(k):
-                config_options.update(self.bundle_config.get_parsed_content(k, instantiate=True))  # type: ignore
-        
         try:
-            label_dict = self.bundle_config.get_parsed_content("label_dict", instantiate=True)
+            for k in self.const.key_displayable_configs():
+                if self.bundle_config.get(k):
+                    config_options.update(self.bundle_config.get_parsed_content(k, instantiate=True))  # type: ignore
+            
+            
+                label_dict = self.bundle_config.get_parsed_content("label_dict", instantiate=True)
             for k, v in label_dict.items():
                 config_options["Label_"+str(k)] = v
         except Exception as e:
