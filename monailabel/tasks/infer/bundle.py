@@ -155,6 +155,8 @@ class BundleInferTask(BasicInferTask):
 
         self.key_image, image = next(iter(metadata["network_data_format"]["inputs"].items()))
         self.key_image = "image"
+        self.metadata_inputs = metadata["network_data_format"]["inputs"]
+        self.metadata_outputs = metadata["network_data_format"]["outputs"]
         self.key_pred, pred = next(iter(metadata["network_data_format"]["outputs"].items()))
 
         # labels = ({v.lower(): int(k) for k, v in pred.get("channel_def", {}).items() if v.lower() != "background"})
@@ -204,6 +206,10 @@ class BundleInferTask(BasicInferTask):
     def info(self) -> Dict[str, Any]:
         i = super().info()
         i["version"] = self.version
+        i["metadata"] = {
+            "inputs": self.metadata_inputs,
+            "outputs": self.metadata_outputs,
+        }
         return i
 
     def pre_transforms(self, data=None) -> Sequence[Callable]:
