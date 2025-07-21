@@ -101,7 +101,7 @@ export default class AutoSegmentation extends BaseTab {
 
     const response = await this.props
       .client()
-      .infer(model, displaySet.SeriesInstanceUID, params);
+      .infer(model, displaySet.StudyInstanceUID, params);
     // console.log(response);
 
     hideNotification(nid, this.notification);
