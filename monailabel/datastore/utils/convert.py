@@ -16,6 +16,7 @@ import pathlib
 import tempfile
 import time
 
+from monailabel.config import settings
 import numpy as np
 import pydicom
 import pydicom_seg
@@ -29,6 +30,46 @@ from monailabel.utils.others.generic import run_command
 
 logger = logging.getLogger(__name__)
 
+from MONet_scripts.MONet_concatenate_modalities import concatenate
+    
+    
+def multimodal_dicom_to_nifti(study_dir):
+    start = time.time()
+
+    if not os.path.isdir(study_dir):
+        logger.error(f"Invalid Study Directory: {study_dir}")
+        return None
+
+    series_dirs = [os.path.join(study_dir, d) for d in os.listdir(study_dir) if os.path.isdir(os.path.join(study_dir, d))]
+
+    modalities_filter = settings.MONAI_LABEL_DICOMWEB_MODALITIES
+    modality_dict = {}
+    for series_dir in series_dirs:
+        if os.path.exists(series_dir):
+            reader = SimpleITK.ImageSeriesReader()
+            dicom_names = reader.GetGDCMSeriesFileNames(series_dir)
+            if dicom_names:
+                metadata = pydicom.dcmread(dicom_names[0])
+                for m in modalities_filter["Modalities"]:
+                    all_tags_match = True
+                    for tag, value in modalities_filter["Modalities"][m].items():
+                        if metadata.get(tag) != value:
+                            all_tags_match = False
+                            break
+                    if all_tags_match:
+                        modality_dict[m] = series_dir
+    ordered_modality_dict = {}
+    for modality in modalities_filter["Order"]:
+        if modality in modality_dict:
+            output_file = dicom_to_nifti(modality_dict[modality])
+            if output_file:
+                ordered_modality_dict[modality] = output_file
+
+    concatenated_file = concatenate(ordered_modality_dict, modalities_filter["Reference"],"/tmp")
+    print(f"Concatenated File: {concatenated_file}")
+    logger.info(f"Total Series Converted: {len(ordered_modality_dict)}")
+    logger.info(f"multimodal_dicom_to_nifti latency : {time.time() - start} (sec)")
+    return concatenated_file, series_dirs
 
 def dicom_to_nifti(series_dir, is_seg=False):
     start = time.time()

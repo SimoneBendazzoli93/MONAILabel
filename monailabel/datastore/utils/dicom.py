@@ -76,36 +76,46 @@ def dicom_web_download_series(study_id, series_id, save_dir, client: DICOMwebCli
         study_id = str(meta["StudyInstanceUID"].value)
 
     os.makedirs(save_dir, exist_ok=True)
-    if not frame_fetch:
-        instances = client.retrieve_series(study_id, series_id)
-        for instance in instances:
-            instance_id = str(instance["SOPInstanceUID"].value)
-            file_name = os.path.join(save_dir, f"{instance_id}.dcm")
-            instance.save_as(file_name)
-    else:
-        # TODO:: This logic (combining meta+pixeldata) needs improvement
-        def save_from_frame(m):
-            d = Dataset.from_json(m)
-            instance_id = str(d["SOPInstanceUID"].value)
+    # Retrieve all series of a study if series_id is None
+    if series_id is None:
+        series_list = client.search_for_series(search_filters={"StudyInstanceUID": study_id})
+        
+        series_list = [Dataset.from_json(s)["SeriesInstanceUID"].value for s in series_list]
+        print(series_list)
+        logger.info(f"Found {len(series_list)} series in study {study_id}")
+    for series_id in series_list:
+        print(f"++ Downloading Series: {series_id}")
+        os.makedirs(os.path.join(save_dir, series_id), exist_ok=True)
+        if not frame_fetch:
+            instances = client.retrieve_series(study_id, series_id)
+            for instance in instances:
+                instance_id = str(instance["SOPInstanceUID"].value)
+                file_name = os.path.join(save_dir, series_id, f"{instance_id}.dcm")
+                instance.save_as(file_name)
+        else:
+            # TODO:: This logic (combining meta+pixeldata) needs improvement
+            def save_from_frame(m):
+                d = Dataset.from_json(m)
+                instance_id = str(d["SOPInstanceUID"].value)
 
-            # Hack to merge Info + RawData
-            d.is_little_endian = True
-            d.is_implicit_VR = True
-            d.PixelData = client.retrieve_instance_frames(
-                study_instance_uid=study_id,
-                series_instance_uid=series_id,
-                sop_instance_uid=instance_id,
-                frame_numbers=[1],
-            )[0]
+                # Hack to merge Info + RawData
+                d.is_little_endian = True
+                d.is_implicit_VR = True
+                d.PixelData = client.retrieve_instance_frames(
+                    study_instance_uid=study_id,
+                    series_instance_uid=series_id,
+                    sop_instance_uid=instance_id,
+                    frame_numbers=[1],
+                )[0]
 
-            file_name = os.path.join(save_dir, f"{instance_id}.dcm")
-            logger.info(f"++ Saved {os.path.basename(file_name)}")
-            d.save_as(file_name)
+                file_name = os.path.join(save_dir, series_id, f"{instance_id}.dcm")
+                logger.info(f"++ Saved {os.path.basename(file_name)}")
+                d.save_as(file_name)
 
-        meta_list = client.retrieve_series_metadata(study_id, series_id)
-        logger.info(f"++ Saving DCM into: {save_dir}")
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="DICOMFetch") as executor:
-            executor.map(save_from_frame, meta_list)
+            meta_list = client.retrieve_series_metadata(study_id, series_id)
+            logger.info(f"++ Saving DCM into: {save_dir}/{series_id}/")
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="DICOMFetch") as executor:
+                executor.map(save_from_frame, meta_list)
 
     logger.info(f"Time to download: {time.time() - start} (sec)")
 

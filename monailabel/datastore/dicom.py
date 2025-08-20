@@ -22,11 +22,12 @@ from pydicom.dataset import Dataset
 
 from monailabel.config import settings
 from monailabel.datastore.local import LocalDatastore
-from monailabel.datastore.utils.convert import binary_to_image, dicom_to_nifti, nifti_to_dicom_seg
+from monailabel.datastore.utils.convert import binary_to_image, dicom_to_nifti, nifti_to_dicom_seg, multimodal_dicom_to_nifti
 from monailabel.datastore.utils.dicom import dicom_web_download_series, dicom_web_upload_dcm
 from monailabel.interfaces.datastore import DefaultLabelTag
 from monailabel.utils.others.generic import md5_digest
 
+from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
@@ -80,15 +81,16 @@ class DICOMWebDatastore(LocalDatastore):
         logger.info(f"Image Dir (cache): {image_dir}")
 
         if not os.path.exists(image_dir) or not os.listdir(image_dir):
-            dicom_web_download_series(None, image_id, image_dir, self._client, self._fetch_by_frame)
+            dicom_web_download_series(image_id, None, image_dir, self._client, self._fetch_by_frame)
 
         if not self._convert_to_nifti:
             return image_dir
 
         image_nii_gz = os.path.realpath(os.path.join(self._datastore.image_path(), f"{image_id}.nii.gz"))
         if not os.path.exists(image_nii_gz):
-            image_nii_gz = dicom_to_nifti(image_dir)
-            super().add_image(image_id, image_nii_gz, self._dicom_info(image_id))
+            image_nii_gz, series_dirs = multimodal_dicom_to_nifti(image_dir)
+            series_id = Path(series_dirs[0]).name
+            super().add_image(image_id, image_nii_gz, self._dicom_info(series_id))
 
         return image_nii_gz
 
@@ -128,9 +130,11 @@ class DICOMWebDatastore(LocalDatastore):
     @cached(cache=TTLCache(maxsize=16, ttl=settings.MONAI_LABEL_DICOMWEB_CACHE_EXPIRY))
     def list_images(self) -> List[str]:
         datasets = self._client.search_for_series(search_filters=self._search_filter)
-        series = [str(Dataset.from_json(ds)["SeriesInstanceUID"].value) for ds in datasets]
-        logger.debug("Total Series: {}\n{}".format(len(series), "\n".join(series)))
-        return series
+        studies = [str(Dataset.from_json(ds)["StudyInstanceUID"].value) for ds in datasets]
+        studies = list(set(studies))  # Unique studies
+        studies.sort()
+        logger.debug("Total Studies: {}\n{}".format(len(studies), "\n".join(studies)))
+        return studies
 
     @cached(cache=TTLCache(maxsize=16, ttl=settings.MONAI_LABEL_DICOMWEB_CACHE_EXPIRY))
     def get_labeled_images(self, label_tag: Optional[str] = None, labels: Optional[List[str]] = None) -> List[str]:
@@ -144,21 +148,23 @@ class DICOMWebDatastore(LocalDatastore):
             )
             seg_meta = Dataset.from_json(meta[0])
             if seg_meta.get("ReferencedSeriesSequence"):
-                referenced_series_instance_uid = str(
-                    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
-                )
+                referenced_series_instance_uid = seg_meta["StudyInstanceUID"]
+                #str(
+                #    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
+                #)
+                print(self.list_images())
                 if referenced_series_instance_uid in self.list_images():
                     image_series.append(referenced_series_instance_uid)
                 else:
                     logger.warning(
                         "Label Ignored:: ReferencedSeriesSequence is NOT in filtered image list: {}".format(
-                            str(seg["SeriesInstanceUID"].value)
+                            str(seg["StudyInstanceUID"].value)
                         )
                     )
             else:
                 logger.warning(
                     "Label Ignored:: ReferencedSeriesSequence is NOT found: {}".format(
-                        str(seg["SeriesInstanceUID"].value)
+                        str(seg["StudyInstanceUID"].value)
                     )
                 )
         return image_series
@@ -191,6 +197,12 @@ class DICOMWebDatastore(LocalDatastore):
         # Support DICOM-SEG uploading only final version
         if label_tag == DefaultLabelTag.FINAL:
             image_dir = os.path.realpath(os.path.join(self._datastore.image_path(), image_id))
+            modalities_filter = settings.MONAI_LABEL_DICOMWEB_MODALITIES
+            reference_modality = modalities_filter["Reference"]
+            datasets = self._client.search_for_series(search_filters={"StudyInstanceUID": Path(image_dir).name,"SeriesDescription": reference_modality})
+            ref_series = [Dataset.from_json(ds) for ds in datasets]
+            if ref_series:
+                image_dir = os.path.join(image_dir, ref_series[0]["SeriesInstanceUID"].value)
             label_file = nifti_to_dicom_seg(image_dir, label_filename, label_info.get("label_info"))
 
             label_series_id = dicom_web_upload_dcm(label_file, self._client)
@@ -223,20 +235,22 @@ class DICOMWebDatastore(LocalDatastore):
             )
             seg_meta = Dataset.from_json(meta[0])
             if seg_meta.get("ReferencedSeriesSequence"):
-                referenced_series_instance_uid = str(
-                    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
-                )
+                referenced_series_instance_uid = seg_meta["StudyInstanceUID"]
+                #str(
+                #    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
+                #)
+                print(self.list_images())
                 if referenced_series_instance_uid in self.list_images():
                     image_labels.append(
                         {
-                            "image": str(seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value),
+                            "image": str(seg_meta["StudyInstanceUID"].value),
                             "label": str(seg["SeriesInstanceUID"].value),
                         }
                     )
                 else:
                     logger.warning(
                         "Label Ignored:: ReferencedSeriesSequence is NOT in filtered image list: {}".format(
-                            str(seg["SeriesInstanceUID"].value)
+                            str(seg["StudyInstanceUID"].value)
                         )
                     )
             else:
