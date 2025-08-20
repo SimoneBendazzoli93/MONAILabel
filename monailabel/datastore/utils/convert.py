@@ -43,6 +43,19 @@ def multimodal_dicom_to_nifti(study_dir):
     series_dirs = [os.path.join(study_dir, d) for d in os.listdir(study_dir) if os.path.isdir(os.path.join(study_dir, d))]
 
     modalities_filter = settings.MONAI_LABEL_DICOMWEB_MODALITIES
+    if not modalities_filter or not modalities_filter.get("Modalities"):
+        modality = settings.MONAI_LABEL_DICOMWEB_SEARCH_FILTER.get("Modality", "image")
+        modalities_filter = {
+            "Order": [
+                modality
+            ],
+            "Reference": modality,
+            "Modalities": {
+                modality: {
+                    "Modality": modality
+                }
+            }
+        }
     modality_dict = {}
     for series_dir in series_dirs:
         if os.path.exists(series_dir):
