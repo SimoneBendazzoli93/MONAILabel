@@ -198,8 +198,14 @@ class DICOMWebDatastore(LocalDatastore):
         if label_tag == DefaultLabelTag.FINAL:
             image_dir = os.path.realpath(os.path.join(self._datastore.image_path(), image_id))
             modalities_filter = settings.MONAI_LABEL_DICOMWEB_MODALITIES
-            reference_modality = modalities_filter["Reference"]
-            datasets = self._client.search_for_series(search_filters={"StudyInstanceUID": Path(image_dir).name,"SeriesDescription": reference_modality})
+            if modalities_filter and "Reference" in modalities_filter:
+                reference_modality = modalities_filter["Reference"]
+                datasets = self._client.search_for_series(search_filters={"StudyInstanceUID": Path(image_dir).name,"SeriesDescription": reference_modality})
+
+            else:
+                reference_modality = None
+                datasets = self._client.search_for_series(search_filters={"StudyInstanceUID": Path(image_dir).name})
+
             ref_series = [Dataset.from_json(ds) for ds in datasets]
             if ref_series:
                 image_dir = os.path.join(image_dir, ref_series[0]["SeriesInstanceUID"].value)
