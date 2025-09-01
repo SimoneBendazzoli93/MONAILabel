@@ -83,6 +83,8 @@ def dicom_web_download_series(study_id, series_id, save_dir, client: DICOMwebCli
         series_list = [Dataset.from_json(s)["SeriesInstanceUID"].value for s in series_list]
         print(series_list)
         logger.info(f"Found {len(series_list)} series in study {study_id}")
+    else:
+        series_list = [series_id]
     for series_id in series_list:
         print(f"++ Downloading Series: {series_id}")
         os.makedirs(os.path.join(save_dir, series_id), exist_ok=True)

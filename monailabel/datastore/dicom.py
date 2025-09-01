@@ -148,16 +148,16 @@ class DICOMWebDatastore(LocalDatastore):
             )
             seg_meta = Dataset.from_json(meta[0])
             if seg_meta.get("ReferencedSeriesSequence"):
-                referenced_series_instance_uid = seg_meta["StudyInstanceUID"]
+                referenced_series_instance_uid = seg_meta["StudyInstanceUID"].value
                 #str(
                 #    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
                 #)
-                print(self.list_images())
                 if referenced_series_instance_uid in self.list_images():
                     image_series.append(referenced_series_instance_uid)
                 else:
                     logger.warning(
-                        "Label Ignored:: ReferencedSeriesSequence is NOT in filtered image list: {}".format(
+                        "Label Ignored:: ReferencedSeriesSequence {} is NOT in filtered image list: {}".format(
+                            referenced_series_instance_uid,
                             str(seg["StudyInstanceUID"].value)
                         )
                     )
@@ -241,11 +241,10 @@ class DICOMWebDatastore(LocalDatastore):
             )
             seg_meta = Dataset.from_json(meta[0])
             if seg_meta.get("ReferencedSeriesSequence"):
-                referenced_series_instance_uid = seg_meta["StudyInstanceUID"]
+                referenced_series_instance_uid = seg_meta["StudyInstanceUID"].value
                 #str(
                 #    seg_meta["ReferencedSeriesSequence"].value[0]["SeriesInstanceUID"].value
                 #)
-                print(self.list_images())
                 if referenced_series_instance_uid in self.list_images():
                     image_labels.append(
                         {
@@ -255,7 +254,7 @@ class DICOMWebDatastore(LocalDatastore):
                     )
                 else:
                     logger.warning(
-                        "Label Ignored:: ReferencedSeriesSequence is NOT in filtered image list: {}".format(
+                        "Label Ignored:: ReferencedSeriesSequence {} is NOT in filtered image list: {}".format(referenced_series_instance_uid,
                             str(seg["StudyInstanceUID"].value)
                         )
                     )

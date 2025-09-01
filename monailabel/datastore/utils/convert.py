@@ -71,6 +71,10 @@ def multimodal_dicom_to_nifti(study_dir):
                             break
                     if all_tags_match:
                         modality_dict[m] = series_dir
+                if list(modalities_filter["Modalities"].keys()) == ["image"]:
+                    m = metadata.get("Modality")
+                    if m != "SEG":
+                        modality_dict["image"] = series_dir
     ordered_modality_dict = {}
     for modality in modalities_filter["Order"]:
         if modality in modality_dict:
@@ -79,7 +83,6 @@ def multimodal_dicom_to_nifti(study_dir):
                 ordered_modality_dict[modality] = output_file
 
     concatenated_file = concatenate(ordered_modality_dict, modalities_filter["Reference"],"/tmp")
-    print(f"Concatenated File: {concatenated_file}")
     logger.info(f"Total Series Converted: {len(ordered_modality_dict)}")
     logger.info(f"multimodal_dicom_to_nifti latency : {time.time() - start} (sec)")
     return concatenated_file, series_dirs
@@ -249,6 +252,7 @@ def itk_image_to_dicom_seg(label, series_dir, template) -> str:
 def dicom_seg_to_itk_image(label, output_ext=".seg.nrrd"):
     filename = label if not os.path.isdir(label) else os.path.join(label, os.listdir(label)[0])
 
+    filename = filename if not os.path.isdir(filename) else os.path.join(filename, os.listdir(filename)[0])
     dcm = pydicom.dcmread(filename)
     reader = pydicom_seg.MultiClassReader()
     result = reader.read(dcm)
