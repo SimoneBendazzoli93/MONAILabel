@@ -13,6 +13,7 @@ import glob
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from typing import Dict, Optional, Sequence
@@ -36,7 +37,7 @@ from monailabel.interfaces.datastore import Datastore
 from monailabel.interfaces.tasks.train import TrainTask
 from monailabel.utils.others.class_utils import unload_module
 from monailabel.utils.others.generic import device_list, name_to_device
-
+import yaml
 logger = logging.getLogger(__name__)
 
 RESAMPLING_PARAMETERS = {
@@ -265,6 +266,8 @@ class BundleTrainTask(TrainTask):
             region_class_order = [int(i) for i in region_class_order.split(",")]
         
         modality_list = [m for m in modality_list.split(",")]
+        subprocess.run(["rm", "-rf", nnunet_root_dir], check=False)
+        os.makedirs(nnunet_root_dir, exist_ok=True)
         prepare_data_folder_api(
             data_dir,
             nnunet_root_dir,
@@ -343,7 +346,25 @@ class BundleTrainTask(TrainTask):
     
     def _replace_plans_file(self):
         os.path.join(self.bundle_path, "nnUNet_Dir")
-    
+        with open(os.path.join(self.bundle_path, "models", "plans.json"), "r") as f:
+            plans = json.load(f)
+            
+        with open(os.path.join(self.bundle_path, "models", "dataset.json"), "r") as f:
+            dataset_json = json.load(f)
+            
+        with open(os.path.join(self.bundle_path, "configs", "inference.yaml"), "r") as f:
+            inference = yaml.safe_load(f)
+        inference["plans"] = plans
+        inference["dataset_json"] = dataset_json
+        
+        with open(os.path.join(self.bundle_path, "configs", "inference.json"), "w") as f:
+            json.dump(inference, f)
+
+        
+        checkpoint_files = glob.glob(os.path.join(self.bundle_path, "models", "fold_0", "checkpoint_epoch=*.pt"))
+        
+        shutil.copyfile(os.path.join(self.bundle_path, "models", "fold_0", checkpoint_files[-1]), os.path.join(self.bundle_path, "models", "fold_0", "model.pt"))  
+
     def __call__(self, request, datastore: Datastore):
         logger.info(f"Train Request: {request}")
         ds = self._fetch_datalist(request, datastore)
@@ -442,7 +463,7 @@ class BundleTrainTask(TrainTask):
         model_filename = request.get("model_filename", "model.pt")
         model_filename = model_filename if isinstance(model_filename, str) else model_filename[0]
         model_pytorch = os.path.join(self.bundle_path, "models", "fold_0",model_filename)
-        if model_filename.endswith(".ts"):
+        if model_filename.endswith(".ts") and Path(model_pytorch).is_file():
             model_pytorch = self.convert_ts_to_pt(model_pytorch)
         self._load_checkpoint(model_pytorch, pretrained, train_handlers)
 
@@ -453,7 +474,9 @@ class BundleTrainTask(TrainTask):
             self.const.key_device(): device,
             self.const.key_train_handlers(): train_handlers,
         }
-
+        if pretrained:
+            overrides[self.const.key_train_trainer_max_epochs()] = 1000
+            
         # update config options from user
         for k in self.const.key_displayable_configs():
             if self.bundle_config.get(k):
@@ -527,7 +550,13 @@ class BundleTrainTask(TrainTask):
         else:
             sys.path.insert(0, self.bundle_path)
             unload_module("scripts")
-
+            overrides["iterations"] = int(request.get("iterations", 250))
+            overrides["dataset_key"] = "image"
+            if pretrained:
+                resume_epoch = 1000 - max_epochs
+                run = self.bundle_config.get("run")
+                print(f"Run Config: {run}")
+                overrides["run"] = ["$src.trainer.reload_checkpoint(@train#trainer,{},{},'',@lr_scheduler)".format(resume_epoch,overrides["iterations"])] + run
             self.run_single_gpu(request, overrides)
             if not pretrained:
                 logger.info("Replacing plans file in inference config, since the model is trained from scratch...")

@@ -525,7 +525,9 @@ class BasicInferTask(InferTask):
 
         inferer = self.inferer(data)
         logger.info(f"Inferer:: {device} => {inferer.__class__.__name__} => {inferer.__dict__}")
-
+        if self.network is None:
+            self.predictor(model_name=data.get("model_filename"))
+            self.network = self.predictor(model_name=data.get("model_filename")).predictor.network
         network = self._get_network(device, data)
         if network:
             inputs = data[self.input_key]

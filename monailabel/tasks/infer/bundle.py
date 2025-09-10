@@ -50,7 +50,7 @@ class BundleConstants:
         return "bundle_root"
 
     def key_network_def(self) -> str:
-        return "network_def_predictor"
+        return "network_def"
 
     def key_preprocessing(self) -> Sequence[str]:
         return ["preprocessing", "pre_transforms"]
@@ -107,6 +107,9 @@ class BundleInferTask(BasicInferTask):
             model_path = os.path.join(path, "models", self.const.model_torchscript())
             if not os.path.exists(model_path):
                 logger.warning(f"Ignore {path} as there is no infer config {self.const.configs()} exists")
+                with open(os.path.join(path, "configs", "metadata.json"), "w") as f:
+                    metadata = os.environ.get("METADATA_JSON")
+                    json.dump(metadata, f)
                 return
             else:
                 # Prepare empty dict with keys matching the embedded files
@@ -139,7 +142,8 @@ class BundleInferTask(BasicInferTask):
         network = None
         model_path = os.path.join(path, "models", self.const.model_pytorch())
         if os.path.exists(model_path):
-            network = self.bundle_config.get_parsed_content(self.const.key_network_def(), instantiate=True)
+            ...
+            #network = self.bundle_config.get_parsed_content(self.const.key_network_def(), instantiate=True)
         else:
             model_path = os.path.join(path, "models", self.const.model_torchscript())
             if not os.path.exists(model_path):
