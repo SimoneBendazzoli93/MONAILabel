@@ -243,7 +243,7 @@ class BundleTrainTask(TrainTask):
                 })
             if "scheduler" in checkpoint:
                 load_dict.update({
-                    "scheduler": "$@nnunet_trainer.scheduler",
+                    "scheduler": "$@nnunet_trainer.lr_scheduler",
                 })
              
             if not [t for t in train_handlers if t.get("_target_") == CheckpointLoader.__name__]:
