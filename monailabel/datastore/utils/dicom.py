@@ -144,8 +144,9 @@ def dicom_web_download_series(study_id, series_id, save_dir, client: DICOMwebCli
                 logger.info(f"Modality for instance {instance_id}: {modality}")
                 if modality == "PT":
                     suv_factor = normalize_PET_to_SUV_BW(instance)
-                    instance.RescaleSlope = suv_factor * instance.RescaleSlope
-                    logger.info(f"Normalized SUV BW for instance {instance_id}: {suv_factor}")
+                    if suv_factor != 1:
+                        instance.RescaleSlope = suv_factor * instance.RescaleSlope
+                        logger.info(f"Normalized SUV BW for instance {instance_id}: {suv_factor}")
                 instance.save_as(file_name)
         else:
             # TODO:: This logic (combining meta+pixeldata) needs improvement
