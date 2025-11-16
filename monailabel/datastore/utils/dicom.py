@@ -24,46 +24,50 @@ import math
 logger = logging.getLogger(__name__)
 
 def normalize_PET_to_SUV_BW(slice):
-    corrected_image = slice[0x0028, 0x0051].value
-    decay_correction = slice[0x0054, 0x1102].value
-    units = slice[0x0054, 0x1001].value
+    try:
+        corrected_image = slice[0x0028, 0x0051].value
+        decay_correction = slice[0x0054, 0x1102].value
+        units = slice[0x0054, 0x1001].value
 
-    series_date = slice.SeriesDate
-    acquisition_date = slice.AcquisitionDate
-    series_time = slice.SeriesTime
-    acquisition_time = slice.AcquisitionTime
-    half_life = slice.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife
-    weight = slice.PatientWeight
+        series_date = slice.SeriesDate
+        acquisition_date = slice.AcquisitionDate
+        series_time = slice.SeriesTime
+        acquisition_time = slice.AcquisitionTime
+        half_life = slice.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife
+        weight = slice.PatientWeight
 
-    if "ATTN" in corrected_image and "DECY" in corrected_image and decay_correction == "START":
-        if units == "BQML":
-            if series_time <= acquisition_time and series_date <= acquisition_date:
-                scan_date = series_date
-                scan_time = series_time
-            else:
-                scan_date = acquisition_date
-                scan_time = acquisition_time
-            # if not RadiopharmaceuticalStartTime in ds.RadiopharmaceuticalInformationSequence[0]:
-            #    ...
-            # else:
-            start_time = slice.RadiopharmaceuticalInformationSequence[0].RadiopharmaceuticalStartTime
-            start_date = scan_date
+        if "ATTN" in corrected_image and "DECY" in corrected_image and decay_correction == "START":
+            if units == "BQML":
+                if series_time <= acquisition_time and series_date <= acquisition_date:
+                    scan_date = series_date
+                    scan_time = series_time
+                else:
+                    scan_date = acquisition_date
+                    scan_time = acquisition_time
+                # if not RadiopharmaceuticalStartTime in ds.RadiopharmaceuticalInformationSequence[0]:
+                #    ...
+                # else:
+                start_time = slice.RadiopharmaceuticalInformationSequence[0].RadiopharmaceuticalStartTime
+                start_date = scan_date
 
-            scan_time = str(round(float(scan_time)))
-            str_scan_time = time.strptime(scan_date + scan_time, "%Y%m%d%H%M%S")
+                scan_time = str(round(float(scan_time)))
+                str_scan_time = time.strptime(scan_date + scan_time, "%Y%m%d%H%M%S")
 
-            start_time = str(round(float(start_time)))
+                start_time = str(round(float(start_time)))
 
-            str_start_time = time.strptime(start_date + start_time, "%Y%m%d%H%M%S")
+                str_start_time = time.strptime(start_date + start_time, "%Y%m%d%H%M%S")
 
-            decay_time = time.mktime(str_scan_time) - time.mktime(str_start_time)
+                decay_time = time.mktime(str_scan_time) - time.mktime(str_start_time)
 
-            injected_dose = slice.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose
-            decayed_dose = injected_dose * math.pow(2, -decay_time / half_life)
+                injected_dose = slice.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose
+                decayed_dose = injected_dose * math.pow(2, -decay_time / half_life)
 
-            SUB_BW_scale_factor = (weight * 1000) / decayed_dose
+                SUB_BW_scale_factor = (weight * 1000) / decayed_dose
 
-    return SUB_BW_scale_factor
+        return SUB_BW_scale_factor
+    except Exception as e:
+        logger.error(f"Error normalizing PET to SUV BW: {e}, returning 1")
+        return 1
 
 def generate_key(patient_id: str, study_id: str, series_id: str):
     return md5_digest(f"{patient_id}+{study_id}+{series_id}")
